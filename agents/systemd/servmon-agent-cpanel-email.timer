@@ -1,0 +1,11 @@
+[Unit]
+Description=Run ServMon Agent every minute (cPanel Email Host)
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+RandomizedDelaySec=2
+Unit=servmon-agent-cpanel-email.service
+
+[Install]
+WantedBy=timers.target

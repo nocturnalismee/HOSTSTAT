@@ -1,0 +1,20 @@
+[Unit]
+Description=ServMon Agent Push (cPanel Email Host)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/agent-cpanel-mail.sh
+TimeoutStartSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/tmp /var/tmp
+UMask=0077
+Nice=10
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,5 @@
+USE servmon;
+
+ALTER TABLE servers
+    ADD COLUMN provider VARCHAR(100) DEFAULT NULL AFTER location,
+    ADD COLUMN label VARCHAR(100) DEFAULT NULL AFTER type;

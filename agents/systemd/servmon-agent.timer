@@ -1,0 +1,11 @@
+[Unit]
+Description=Run ServMon Agent every minute (General)
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+RandomizedDelaySec=2
+Unit=servmon-agent.service
+
+[Install]
+WantedBy=timers.target
