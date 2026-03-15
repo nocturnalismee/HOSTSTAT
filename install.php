@@ -588,7 +588,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $installed && ($_POST['action'] ?? 
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Installer servmon</title>
+    <title>APP INSTALLER</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         :root {
@@ -738,7 +738,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $installed && ($_POST['action'] ?? 
         <div class="col-lg-7">
             <div class="install-card shadow h-100">
                 <div class="p-4 p-md-5">
-                    <h1 class="h3 install-title">Installer `servmon`</h1>
+                    <h1 class="h3 install-title">APP INSTALLER</h1>
                     <p class="muted">
                         <?= $mode === 'install'
                             ? 'Set up database, import schema, run migrations automatically, and write local configuration.'
