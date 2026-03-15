@@ -200,6 +200,95 @@ async function refreshServerTable() {
   const endpoint =
     window.SERVMON_API_STATUS || "/api/status.php?include_inactive=1";
 
+function syncAdminTableRows(tableBody, servers) {
+  const fragment = document.createDocumentFragment();
+  const existingRows = new Map();
+  tableBody.querySelectorAll("tr[data-server-id]").forEach((row) => {
+    existingRows.set(row.getAttribute("data-server-id"), row);
+  });
+
+  servers.forEach((s) => {
+    const key = String(s.id ?? s.name ?? "");
+    let row = existingRows.get(key);
+    if (!row) {
+      row = document.createElement("tr");
+      row.setAttribute("data-server-id", key);
+    }
+    
+    // Calculate severity for coloring
+    const score = SM.calculateSeverityScore(s);
+    row.className = "dashboard-row-link";
+    if (score >= 500) {
+      row.classList.add("server-row-critical");
+    } else if (score >= 100) {
+      row.classList.add("server-row-warning");
+    }
+
+    const detailBase =
+      window.SERVMON_ADMIN_DETAIL_BASE || "/admin/server-detail.php?id=";
+    row.setAttribute(
+      "data-detail-url",
+      `${detailBase}${encodeURIComponent(String(s.id ?? ""))}`
+    );
+    row.setAttribute("tabindex", "0");
+    row.setAttribute("role", "link");
+    row.setAttribute(
+      "aria-label",
+      `Open details for ${String(s.name ?? "server")}`
+    );
+    const nextHtml = renderAdminRowCells(s);
+    if (row.dataset.renderedHtml !== nextHtml) {
+      if (!row.hasChildNodes()) {
+        row.innerHTML = nextHtml;
+      } else {
+        const tempRow = document.createElement("tr");
+        tempRow.innerHTML = nextHtml;
+        const oldCells = Array.from(row.children);
+        const newCells = Array.from(tempRow.children);
+        for (let i = 0; i < newCells.length; i++) {
+          if (oldCells[i] && oldCells[i].innerHTML !== newCells[i].innerHTML) {
+            oldCells[i].innerHTML = newCells[i].innerHTML;
+          }
+        }
+      }
+      row.dataset.renderedHtml = nextHtml;
+    }
+    fragment.appendChild(row);
+  });
+
+  tableBody.replaceChildren(fragment);
+}
+
+function wireDashboardRowNavigation() {
+  const tableBody = document.querySelector("[data-server-table]");
+  if (!tableBody) return;
+
+  tableBody.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-detail-url]");
+    if (!row) return;
+    const detailUrl = row.getAttribute("data-detail-url");
+    if (!detailUrl) return;
+    window.location.href = detailUrl;
+  });
+
+  tableBody.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest("tr[data-detail-url]");
+    if (!row) return;
+    const detailUrl = row.getAttribute("data-detail-url");
+    if (!detailUrl) return;
+    event.preventDefault();
+    window.location.href = detailUrl;
+  });
+}
+
+// ── Status Polling ───────────────────────────────────────────────────
+async function refreshServerTable() {
+  const tableBody = document.querySelector("[data-server-table]");
+  if (!tableBody) return;
+  const endpoint =
+    window.SERVMON_API_STATUS || "/api/status.php?include_inactive=1";
+
   try {
     const response = await fetch(endpoint, {
       headers: { Accept: "application/json" },
@@ -214,11 +303,8 @@ async function refreshServerTable() {
       updateStaleHint("Live data format invalid", true);
       return;
     }
-    servers.sort((a, b) =>
-      String(a.name ?? "").localeCompare(String(b.name ?? ""), undefined, {
-        sensitivity: "base",
-      })
-    );
+    
+    servers.sort(SM.compareServers);
 
     syncAdminTableRows(tableBody, servers);
     SM.persistCpuHistory(CPU_HISTORY_KEY);
@@ -231,6 +317,39 @@ async function refreshServerTable() {
   }
 }
 
+// ── SSE with polling fallback ────────────────────────────────────────
+function handleAdminStatusUpdate(servers) {
+  var tableBody = document.querySelector("[data-server-table]");
+  if (!tableBody || !Array.isArray(servers)) return;
+  
+  servers.sort(SM.compareServers);
+  
+  syncAdminTableRows(tableBody, servers);
+  SM.persistCpuHistory(CPU_HISTORY_KEY);
+  updateAdminSummaryCards(servers);
+  updateStaleHint("SSE | " + new Date().toLocaleTimeString(), false);
+}
+
 refreshServerTable();
 wireDashboardRowNavigation();
-setInterval(refreshServerTable, 15000);
+
+var sseEndpoint = window.SERVMON_API_SSE || "/api/sse.php?include_inactive=1";
+if (SM && SM.createSSEConnection) {
+  SM.createSSEConnection({
+    url: sseEndpoint,
+    events: { status: handleAdminStatusUpdate },
+    fallbackInterval: 15000,
+    fallbackFn: refreshServerTable,
+    onConnectionChange: function (mode) {
+      if (mode === "sse") {
+        updateStaleHint("SSE | " + new Date().toLocaleTimeString(), false);
+      } else if (mode === "polling") {
+        updateStaleHint("Polling | " + new Date().toLocaleTimeString(), false);
+      }
+    },
+  });
+} else {
+  setInterval(refreshServerTable, 15000);
+}
+
+}

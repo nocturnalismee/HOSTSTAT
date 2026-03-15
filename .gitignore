@@ -1,0 +1,10 @@
+# Ignore archives
+*.zip
+
+# Ignore specific agent scripts
+agents/agent-old.sh
+agents/agent-cp-email.sh
+
+# Ignore specific docs
+docs/release-checklist.md
+docs/rollback-playbook.md

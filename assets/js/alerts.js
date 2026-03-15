@@ -116,5 +116,59 @@ async function pollAlerts() {
   }
 }
 
+// ── SSE with polling fallback ────────────────────────────────────────
+function handleSSEAlerts(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  if (!servmonAlertsInitialized) {
+    rows.forEach(function (row) {
+      updateLastAlertId(row.id);
+    });
+    servmonAlertsInitialized = true;
+    return;
+  }
+
+  rows.sort(function (a, b) {
+    return Number(a.id || 0) - Number(b.id || 0);
+  });
+
+  var popupsToShow = rows.slice(-MAX_POPUPS_PER_POLL);
+
+  popupsToShow.forEach(function (row) {
+    showAlertToast(row);
+  });
+
+  rows.forEach(function (row) {
+    updateLastAlertId(row.id);
+  });
+
+  if (popupsToShow.length > 0) {
+    playAlertBeep();
+  }
+}
+
+// Initial poll to fast-forward the alert ID
 pollAlerts();
-setInterval(pollAlerts, 15000);
+
+// SSE connection for real-time alerts (reuses the page's SSE if available)
+var SM = window.ServMon;
+if (SM && SM.createSSEConnection) {
+  var alertSseUrl = window.SERVMON_API_SSE || "/api/sse.php";
+  // Add since_alert_id param if we have a known watermark
+  if (servmonLastAlertId > 0) {
+    alertSseUrl += (alertSseUrl.includes("?") ? "&" : "?") + "since_alert_id=" + servmonLastAlertId;
+  }
+
+  SM.createSSEConnection({
+    url: alertSseUrl,
+    events: {
+      alerts: handleSSEAlerts,
+    },
+    fallbackInterval: 15000,
+    fallbackFn: pollAlerts,
+  });
+} else {
+  // No SSE support — use traditional polling
+  setInterval(pollAlerts, 15000);
+}
+

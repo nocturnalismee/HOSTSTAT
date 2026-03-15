@@ -10,10 +10,11 @@ $rows = db_all(
     'SELECT s.id, s.name, s.location, s.type, s.active,
             m.recorded_at AS last_seen, m.uptime, m.ram_total, m.ram_used, m.hdd_total, m.hdd_used, m.cpu_load, m.network_in_bps, m.network_out_bps, m.mail_mta, m.mail_queue_total
      FROM servers s' . $latestMetricJoin . '
-     WHERE s.active = 1
-     ORDER BY s.name ASC'
+     WHERE s.active = 1'
 );
 $statusOnlineMinutes = max(1, (int) setting_get('alert_down_minutes'));
+
+sortServersBySeverity($rows, $statusOnlineMinutes);
 
 $total = count($rows);
 $online = 0;
@@ -148,8 +149,16 @@ require_once __DIR__ . '/includes/layout/head.php';
                     $diskUsed = max(0, (int) ($row['hdd_used'] ?? 0));
                     $diskTotal = max(0, (int) ($row['hdd_total'] ?? 0));
                     $diskPct = calculateUsagePercent($diskUsed, $diskTotal);
+                    
+                    $score = calculateSeverityScore($row, $statusOnlineMinutes);
+                    $rowClass = '';
+                    if ($score >= 500) {
+                        $rowClass = 'server-row-critical';
+                    } elseif ($score >= 100) {
+                        $rowClass = 'server-row-warning';
+                    }
                     ?>
-                    <tr>
+                    <tr<?= $rowClass !== '' ? ' class="' . e($rowClass) . '"' : '' ?>>
                         <td>
                             <span class="table-cell-truncate" title="<?= e((string) $row['name']) ?>">
                                 <?= e((string) $row['name']) ?>
@@ -199,6 +208,6 @@ require_once __DIR__ . '/includes/layout/head.php';
         </div>
     </div>
 </main>
-<script>window.SERVMON_API_STATUS = "<?= e(app_url('api/status.php')) ?>";</script>
+<script>window.SERVMON_API_STATUS = "<?= e(app_url('api/status.php')) ?>";window.SERVMON_API_SSE = "<?= e(app_url('api/sse.php')) ?>";</script>
 <script src="<?= e(asset_url('assets/js/public.js')) ?>"></script>
 <?php require_once __DIR__ . '/includes/layout/footer.php'; ?>

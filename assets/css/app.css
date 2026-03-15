@@ -95,6 +95,24 @@ samp,
   letter-spacing: -0.015em;
 }
 
+.dashboard-row-link:hover {
+  background: color-mix(in srgb, var(--sv-surface-2) 65%, transparent);
+}
+
+.server-row-critical td {
+  background: color-mix(in srgb, var(--sv-danger) 10%, transparent) !important;
+}
+.server-row-critical:hover td {
+  background: color-mix(in srgb, var(--sv-danger) 15%, transparent) !important;
+}
+
+.server-row-warning td {
+  background: color-mix(in srgb, var(--sv-warning) 8%, transparent) !important;
+}
+.server-row-warning:hover td {
+  background: color-mix(in srgb, var(--sv-warning) 12%, transparent) !important;
+}
+
 .servmon-nav {
   background: color-mix(in srgb, var(--sv-surface) 92%, transparent);
   backdrop-filter: blur(10px);

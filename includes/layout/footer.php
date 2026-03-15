@@ -12,7 +12,7 @@ if ($isAdminPage || $isPublicIndex):
     $alertEndpoint = $isAdminPage ? app_url('api/alerts.php') : app_url('api/public_alerts.php');
 ?>
 <div id="servmon-alert-toast-container" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
-<script>window.SERVMON_API_ALERTS = "<?= e($alertEndpoint) ?>";</script>
+<script>window.SERVMON_API_ALERTS = "<?= e($alertEndpoint) ?>";window.SERVMON_API_SSE = "<?= e(app_url('api/sse.php')) ?>";</script>
 <script src="<?= e(asset_url('assets/js/alerts.js')) ?>"></script>
 <?php endif; ?>
 <script>

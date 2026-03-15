@@ -64,6 +64,63 @@ window.ServMon = window.ServMon || {};
     return "is-ok";
   };
 
+  /**
+   * Calculates a severity score for a server (Higher = More severe).
+   * Down servers: 10000+
+   * High resource usage (>90%): 500+
+   * Warning resource usage (>75%): 100+
+   * Online and healthy: ~0
+   * Pending/Unknown: negative or low score
+   */
+  ns.calculateSeverityScore = function (server) {
+    let score = 0;
+    const status = ns.determineStatus(server.last_seen, server.active);
+    
+    // Status carries the most weight
+    if (status === "down") {
+      score += 10000;
+    } else if (status === "pending") {
+      score -= 50; // Pending servers are least urgent unless they were down
+    } else if (status === "online") {
+      // Calculate resource pressure for online servers
+      const ramPct = ns.usagePercent(server.ram_used, server.ram_total);
+      const diskPct = ns.usagePercent(server.hdd_used, server.hdd_total);
+      const cpuLoad = Number(server.cpu_load) || 0;
+
+      // RAM severity
+      if (ramPct >= 90) score += 500;
+      else if (ramPct >= 80) score += 200;
+      else if (ramPct >= 70) score += 50;
+
+      // Disk severity (critical if full)
+      if (diskPct >= 95) score += 600;
+      else if (diskPct >= 85) score += 250;
+      else if (diskPct >= 75) score += 60;
+
+      // CPU severity (assuming typical load average scale)
+      if (cpuLoad >= 4.0) score += 100;
+      else if (cpuLoad >= 2.0) score += 40;
+    }
+    return score;
+  };
+
+  /**
+   * Comparator function for sorting server list by severity, then alphabetical.
+   */
+  ns.compareServers = function (a, b) {
+    const scoreA = ns.calculateSeverityScore(a);
+    const scoreB = ns.calculateSeverityScore(b);
+
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA; // Descending: Highest severity first
+    }
+
+    // Fallback: Alphabetical by name
+    return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+      sensitivity: "base",
+    });
+  };
+
   ns.renderUsageCell = function (used, total, label) {
     const safeUsed = Number.isFinite(Number(used))
       ? Math.max(0, Number(used))
@@ -190,5 +247,217 @@ window.ServMon = window.ServMon || {};
     if (latestLoad > 5.0) strokeColor = "var(--sv-danger)";
 
     return `<svg class="cpu-sparkline" width="${width}" height="${height}"><polyline fill="none" stroke="${strokeColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="${points.trim()}"/></svg>`;
+  };
+  // ── SSE Connection Manager ─────────────────────────────────────────
+
+  /**
+   * Create an SSE connection with automatic reconnect and polling fallback.
+   *
+   * @param {Object} config
+   * @param {string} config.url                  - SSE endpoint URL
+   * @param {Object} config.events               - Map of event name → handler(data)
+   * @param {number} [config.fallbackInterval]    - Polling interval ms (default 15000)
+   * @param {Function} [config.fallbackFn]        - Function to call for polling fallback
+   * @param {Function} [config.onConnectionChange]- Callback(state: 'sse'|'polling'|'error')
+   * @returns {Object} controller with destroy() method
+   */
+  ns.createSSEConnection = function (config) {
+    const MAX_SSE_FAILURES = 3;
+    const INITIAL_RETRY_MS = 1000;
+    const MAX_RETRY_MS = 30000;
+    const SSE_RECOVERY_CHECK_MS = 60000;
+
+    let eventSource = null;
+    let failureCount = 0;
+    let retryMs = INITIAL_RETRY_MS;
+    let retryTimer = null;
+    let pollingTimer = null;
+    let recoveryTimer = null;
+    let destroyed = false;
+    let mode = "connecting"; // 'sse' | 'polling' | 'connecting'
+    let lastEventId = "";
+
+    const fallbackInterval = config.fallbackInterval || 15000;
+    const onConnectionChange = config.onConnectionChange || function () {};
+
+    function setMode(newMode) {
+      if (mode !== newMode) {
+        mode = newMode;
+        onConnectionChange(newMode);
+      }
+    }
+
+    function buildUrl() {
+      const base = config.url || "/api/sse.php";
+      const sep = base.includes("?") ? "&" : "?";
+      let url = base;
+      if (lastEventId) {
+        url += sep + "last_event_id=" + encodeURIComponent(lastEventId);
+      }
+      return url;
+    }
+
+    function connectSSE() {
+      if (destroyed) return;
+      if (!window.EventSource) {
+        startPolling();
+        return;
+      }
+
+      try {
+        const url = buildUrl();
+        eventSource = new EventSource(url);
+
+        eventSource.onopen = function () {
+          failureCount = 0;
+          retryMs = INITIAL_RETRY_MS;
+          setMode("sse");
+          stopPolling();
+          stopRecoveryCheck();
+        };
+
+        // Register event handlers
+        if (config.events) {
+          Object.keys(config.events).forEach(function (eventName) {
+            eventSource.addEventListener(eventName, function (e) {
+              try {
+                const data = JSON.parse(e.data);
+                if (e.lastEventId) {
+                  lastEventId = e.lastEventId;
+                }
+                config.events[eventName](data);
+              } catch (err) {
+                console.warn("ServMon SSE parse error for event:", eventName, err);
+              }
+            });
+          });
+        }
+
+        // Handle server-sent "end" event (max lifetime reached)
+        eventSource.addEventListener("end", function () {
+          closeSSE();
+          scheduleReconnect();
+        });
+
+        eventSource.onerror = function () {
+          failureCount++;
+          closeSSE();
+
+          if (failureCount >= MAX_SSE_FAILURES) {
+            startPolling();
+            startRecoveryCheck();
+          } else {
+            scheduleReconnect();
+          }
+        };
+      } catch (err) {
+        console.warn("ServMon SSE connection failed:", err);
+        failureCount++;
+        if (failureCount >= MAX_SSE_FAILURES) {
+          startPolling();
+          startRecoveryCheck();
+        } else {
+          scheduleReconnect();
+        }
+      }
+    }
+
+    function closeSSE() {
+      if (eventSource) {
+        try {
+          eventSource.close();
+        } catch (e) {
+          /* ignore */
+        }
+        eventSource = null;
+      }
+    }
+
+    function scheduleReconnect() {
+      if (destroyed) return;
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(function () {
+        connectSSE();
+      }, retryMs);
+      // Exponential backoff
+      retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+    }
+
+    function startPolling() {
+      if (destroyed || pollingTimer) return;
+      setMode("polling");
+
+      if (typeof config.fallbackFn === "function") {
+        // Run immediately, then on interval
+        config.fallbackFn();
+        pollingTimer = setInterval(function () {
+          if (destroyed) return;
+          if (document.hidden) return;
+          config.fallbackFn();
+        }, fallbackInterval);
+      }
+    }
+
+    function stopPolling() {
+      if (pollingTimer) {
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+      }
+    }
+
+    function startRecoveryCheck() {
+      if (destroyed || recoveryTimer) return;
+      recoveryTimer = setInterval(function () {
+        if (destroyed) return;
+        // Reset failure count and try SSE again
+        failureCount = 0;
+        retryMs = INITIAL_RETRY_MS;
+        stopPolling();
+        connectSSE();
+      }, SSE_RECOVERY_CHECK_MS);
+    }
+
+    function stopRecoveryCheck() {
+      if (recoveryTimer) {
+        clearInterval(recoveryTimer);
+        recoveryTimer = null;
+      }
+    }
+
+    // Visibility API: pause/resume
+    function onVisibilityChange() {
+      if (destroyed) return;
+      if (document.hidden) {
+        // Tab hidden — close SSE to save resources
+        closeSSE();
+        stopPolling();
+        clearTimeout(retryTimer);
+      } else {
+        // Tab visible again — reconnect
+        failureCount = 0;
+        retryMs = INITIAL_RETRY_MS;
+        connectSSE();
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Start
+    connectSSE();
+
+    // Return controller
+    return {
+      getMode: function () {
+        return mode;
+      },
+      destroy: function () {
+        destroyed = true;
+        closeSSE();
+        stopPolling();
+        stopRecoveryCheck();
+        clearTimeout(retryTimer);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      },
+    };
   };
 })(window.ServMon);

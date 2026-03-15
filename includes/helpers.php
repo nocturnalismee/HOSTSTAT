@@ -182,6 +182,52 @@ function statusBadgeClass(string $status): string
     };
 }
 
+function calculateSeverityScore(array $server, int $statusOnlineMinutes): int
+{
+    $status = serverStatusFromLastSeen($server['last_seen'] ?? null, (int) ($server['active'] ?? 0) === 1, $statusOnlineMinutes);
+    $score = 0;
+
+    if ($status === 'down') {
+        $score += 10000;
+    } elseif ($status === 'pending') {
+        $score -= 50;
+    } elseif ($status === 'online') {
+        $ramUsed = max(0, (int) ($server['ram_used'] ?? 0));
+        $ramTotal = max(0, (int) ($server['ram_total'] ?? 0));
+        $ramPct = calculateUsagePercent($ramUsed, $ramTotal);
+
+        $diskUsed = max(0, (int) ($server['hdd_used'] ?? 0));
+        $diskTotal = max(0, (int) ($server['hdd_total'] ?? 0));
+        $diskPct = calculateUsagePercent($diskUsed, $diskTotal);
+
+        $cpuLoad = (float) ($server['cpu_load'] ?? 0);
+
+        if ($ramPct >= 90) $score += 500;
+        elseif ($ramPct >= 80) $score += 200;
+        elseif ($ramPct >= 70) $score += 50;
+
+        if ($diskPct >= 95) $score += 600;
+        elseif ($diskPct >= 85) $score += 250;
+        elseif ($diskPct >= 75) $score += 60;
+
+        if ($cpuLoad >= 4.0) $score += 100;
+        elseif ($cpuLoad >= 2.0) $score += 40;
+    }
+    return $score;
+}
+
+function sortServersBySeverity(array &$rows, int $statusOnlineMinutes): void
+{
+    usort($rows, function (array $a, array $b) use ($statusOnlineMinutes): int {
+        $scoreA = calculateSeverityScore($a, $statusOnlineMinutes);
+        $scoreB = calculateSeverityScore($b, $statusOnlineMinutes);
+        if ($scoreA !== $scoreB) {
+            return $scoreB <=> $scoreA;
+        }
+        return strnatcasecmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+    });
+}
+
 function parseHistoryRange(?string $history): string
 {
     return match ($history) {

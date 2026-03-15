@@ -35,9 +35,10 @@ $rows = db_all(
     'SELECT s.id, s.name, s.location, s.type, s.active,
             m.recorded_at AS last_seen, m.uptime, m.cpu_load, m.ram_total, m.ram_used, m.hdd_total, m.hdd_used, m.network_in_bps, m.network_out_bps, m.mail_mta, m.mail_queue_total, m.panel_profile
      FROM servers s' . $latestMetricJoin . '
-     ORDER BY s.name ASC'
+'
 );
 $statusOnlineMinutes = max(1, (int) setting_get('alert_down_minutes'));
+sortServersBySeverity($rows, $statusOnlineMinutes);
 $serviceSummaryByServer = [];
 $serverIds = array_values(array_filter(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $rows), static fn (int $id): bool => $id > 0));
 if (!empty($serverIds)) {
@@ -351,6 +352,8 @@ require_once __DIR__ . '/../includes/layout/flash.php';
 <script>
 window.SERVMON_API_STATUS = "<?= e(app_url('api/status.php?include_inactive=1')) ?>";
 window.SERVMON_ADMIN_DETAIL_BASE = "<?= e(app_url('admin/server-detail.php?id=')) ?>";
+window.SERVMON_API_SSE = "<?= e(app_url('api/sse.php?include_inactive=1')) ?>";
+window.SERVMON_API_ALERTS = "<?= e(app_url('api/alerts.php')) ?>";
 </script>
 <script src="<?= e(asset_url('assets/js/dashboard.js')) ?>"></script>
 <?php require_once __DIR__ . '/../includes/layout/footer.php'; ?>

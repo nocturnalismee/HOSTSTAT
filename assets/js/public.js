@@ -78,6 +78,8 @@ function syncPublicTableRows(tableBody, servers) {
       row = document.createElement("tr");
       row.setAttribute("data-server-id", key);
     }
+    const score = SM.calculateSeverityScore(s);
+    row.className = score >= 500 ? "server-row-critical" : (score >= 100 ? "server-row-warning" : "");
     const nextHtml = renderPublicRowCells(s);
     if (row.dataset.renderedHtml !== nextHtml) {
       if (!row.hasChildNodes()) {
@@ -115,11 +117,7 @@ async function refreshPublicStatusTable() {
 
     const servers = await response.json();
     if (!Array.isArray(servers)) return;
-    servers.sort((a, b) =>
-      String(a.name ?? "").localeCompare(String(b.name ?? ""), undefined, {
-        sensitivity: "base",
-      })
-    );
+    servers.sort(SM.compareServers);
 
     syncPublicTableRows(tableBody, servers);
     SM.persistCpuHistory(CPU_HISTORY_KEY);
@@ -130,5 +128,29 @@ async function refreshPublicStatusTable() {
   }
 }
 
+// ── SSE with polling fallback ────────────────────────────────────────
+function handleStatusUpdate(servers) {
+  const tableBody = document.querySelector("[data-public-server-table]");
+  if (!tableBody || !Array.isArray(servers)) return;
+
+  servers.sort(SM.compareServers);
+
+  syncPublicTableRows(tableBody, servers);
+  SM.persistCpuHistory(CPU_HISTORY_KEY);
+  updateSummaryCards(servers);
+}
+
+// Initial render from existing server-rendered HTML (no flash)
 refreshPublicStatusTable();
-setInterval(refreshPublicStatusTable, 15000);
+
+// Start SSE connection with polling fallback
+const sseEndpoint = (window.SERVMON_API_SSE || "/api/sse.php");
+SM.createSSEConnection({
+  url: sseEndpoint,
+  events: {
+    status: handleStatusUpdate,
+  },
+  fallbackInterval: 15000,
+  fallbackFn: refreshPublicStatusTable,
+});
+
